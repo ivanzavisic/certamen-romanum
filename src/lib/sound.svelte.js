@@ -55,8 +55,8 @@ const play = (fn) => () => {
 const quiet = () => {};
 
 export const sfx = {
-  /** III · II · I — a soft low pulse */
-  count: play(() => tone(392, 0, 0.18, { vol: 0.09 })),
+  /** III · II · I — silent on request; the question's chime marks the start */
+  count: quiet,
   /** question appears — gentle rising two-note chime */
   go: play(() => { tone(587, 0, 0.18, { vol: 0.08 }); tone(784, 0.1, 0.3, { vol: 0.09 }); }),
   /** last-seconds ticking was the most annoying part — removed on purpose */
