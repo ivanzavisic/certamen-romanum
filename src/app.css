@@ -19,20 +19,27 @@
 
   --f-display: 'Cinzel Decorative', 'Cinzel', serif;
   --f-caps: 'Cinzel', 'Trajan Pro', serif;
-  --f-body: 'EB Garamond', Georgia, serif;
+  --f-body: 'Crimson Pro', Georgia, serif;
 
-  --radius: 6px;
+  --radius: 8px;
+  --text: #fbf5e8;
+  --text-muted: #e6d7b8;
   --shadow: 0 10px 30px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.35);
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 
+html { font-size: 18px; }
+@media (max-width: 640px) { html { font-size: 16.5px; } }
 html, body { margin: 0; min-height: 100%; }
 
 body {
   font-family: var(--f-body);
-  color: var(--marble);
+  color: var(--text);
+  font-size: 1.1rem;
+  line-height: 1.45;
+  font-weight: 500;
   background-color: var(--night);
   background-image:
     radial-gradient(ellipse at 50% -10%, rgb(212 175 55 / 0.20), transparent 55%),
@@ -59,7 +66,8 @@ button:disabled { cursor: default; }
 .btn {
   font-family: var(--f-caps);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
+  font-size: 1.05rem;
   text-transform: uppercase;
   padding: 0.85em 1.6em;
   border-radius: var(--radius);
@@ -94,7 +102,7 @@ button:disabled { cursor: default; }
   box-shadow: var(--shadow);
 }
 
-.caps { font-family: var(--f-caps); letter-spacing: 0.14em; text-transform: uppercase; }
+.caps { font-family: var(--f-caps); font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
 
 input.field {
   font: inherit;

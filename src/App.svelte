@@ -1,12 +1,15 @@
 <script>
   import { game } from './lib/game.svelte.js';
-  import Lobby from './lib/Lobby.svelte';
-  import Arena from './lib/Arena.svelte';
+  import Lobby from './lib/ui/Lobby.svelte';
+  import Arena from './lib/ui/Arena.svelte';
+  import SoundToggle from './lib/ui/SoundToggle.svelte';
 
   const inGame = $derived(game.status === 'connected' && game.view && game.view.phase !== 'lobby');
 </script>
 
 <div class="columns" aria-hidden="true"><span></span><span></span></div>
+
+<SoundToggle />
 
 {#if inGame}
   <Arena />

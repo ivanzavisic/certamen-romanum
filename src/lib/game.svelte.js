@@ -1,36 +1,59 @@
-// Host-authoritative 1v1 game over WebRTC (PeerJS). The player who creates the
-// arena runs the game loop; the guest only sends inputs and renders snapshots.
-import Peer from 'peerjs';
+// Host-authoritative 1v1 game. The player who creates the arena runs the game
+// loop; the guest only sends inputs and renders snapshots. Messages travel over
+// a public MQTT relay (see net.js).
 import { THEMES, fetchBatch, takeQuestion } from './trivia.js';
+import { openChannel } from './net.js';
+import { log } from './log.svelte.js';
 
 export const TARGET = 10; // first to 10 wins; 10-10 => sudden death
 export const QUESTION_MS = 10_000;
-export const REVEAL_MS = 4_500;
+export const REVEAL_MS = 4_000;
+export const COUNTDOWN_MS = 3_000;
 export const VOTE_MS = 12_000;
 export const VOTE_RESULT_MS = 3_200;
 export const QUESTIONS_PER_THEME = 3;
-const GRACE_MS = 300; // network grace for the guest on the question deadline
-const PREFIX = 'certamen-romanum-v1-';
+const GRACE_MS = 700; // network grace for the guest on deadlines
+const HEARTBEAT_MS = 2_000;
+const PEER_TIMEOUT_MS = 12_000;
+const JOIN_TIMEOUT_MS = 15_000;
 
 export const game = $state({
   role: null, // 'host' | 'guest'
   status: 'idle', // idle | creating | waiting | connecting | connected | error | disconnected
   error: '',
   roomId: '',
+  broker: 0,
   view: null, // latest snapshot from the host
   deadline: 0, // performance.now() timestamp when current phase ends
   myChoice: null,
   myVote: null,
   myRound: -1,
   myVoteKey: -1,
+  rtt: null, // round-trip time to the rival in ms
+  link: 'online', // relay link state: online | offline
 });
 
-let peer = null;
-let conn = null;
-let hs = null; // host state
-let timer = null;
-let joinTimer = null;
+const myId = (() => {
+  try {
+    let id = sessionStorage.getItem('certamen.id');
+    if (!id) sessionStorage.setItem('certamen.id', (id = rid(10)));
+    return id;
+  } catch { return rid(10); }
+})();
 
+let ch = null; // relay channel
+let hs = null; // host state
+let guest = null; // host's view of the guest: { id, name, lastSeen }
+let lastHostSeen = 0;
+let timer = null;
+let beat = null;
+let helloTimer = null;
+let session = 0; // bumps on every create/join/leave so stale async work is ignored
+
+function rid(n) {
+  const abc = 'abcdefghijkmnpqrstuvwxyz23456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => abc[x % abc.length]).join('');
+}
 const shuffle = (arr) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -82,7 +105,7 @@ function sync() {
   if (!hs) return;
   const s = snapshot();
   applyView(s);
-  if (conn?.open) conn.send({ t: 'state', s });
+  if (guest) ch?.send({ t: 'state', to: guest.id, s });
 }
 
 // ---------- host game loop ----------
@@ -100,8 +123,7 @@ function freshMatch(names) {
     scores: { host: 0, guest: 0 },
     theme: null,
     batch: [],
-    batchReady: null,
-    usedLocal: new Set(),
+    usedLocal: hs?.usedLocal ?? new Set(),
     match: Symbol('match'),
     voteKey: 0,
     voteOptions: [],
@@ -140,12 +162,12 @@ function castVote(role, key, themeId) {
 }
 
 function resolveVote() {
-  const { host, guest } = hs.votes;
-  if (host && guest) {
-    hs.voteCoin = host !== guest;
-    hs.theme = hs.voteCoin ? pick([host, guest]) : host;
-  } else if (host || guest) {
-    hs.theme = host || guest;
+  const { host, guest: g } = hs.votes;
+  if (host && g) {
+    hs.voteCoin = host !== g;
+    hs.theme = hs.voteCoin ? pick([host, g]) : host;
+  } else if (host || g) {
+    hs.theme = host || g;
   } else {
     hs.voteCoin = true;
     hs.theme = pick(hs.voteOptions);
@@ -153,8 +175,18 @@ function resolveVote() {
   hs.themeRound = 0;
   hs.batch = [];
   const match = hs.match;
-  const ready = fetchBatch(hs.theme).then((b) => { if (hs?.match === match) hs.batch = b; });
-  setPhase('voteResult', VOTE_RESULT_MS, () => ready.then(() => { if (hs?.match === match) startQuestion(); }));
+  log(`theme chosen: ${themeById(hs.theme)?.name}${hs.voteCoin ? ' (coin flip)' : ''} — fetching questions`);
+  const ready = fetchBatch(hs.theme).then((b) => {
+    log(b.length ? `got ${b.length} questions from Open Trivia DB` : 'trivia API unavailable — using built-in questions');
+    if (hs?.match === match) hs.batch = b;
+  });
+  setPhase('voteResult', VOTE_RESULT_MS, () => ready.then(() => { if (hs?.match === match) startCountdown(); }));
+}
+
+function startCountdown() {
+  hs.q = null;
+  hs.answers = { host: null, guest: null };
+  setPhase('countdown', COUNTDOWN_MS, startQuestion);
 }
 
 function startQuestion() {
@@ -195,7 +227,7 @@ function reveal() {
   setPhase('reveal', REVEAL_MS, () => {
     if (hs.winner) setPhase('over', 0);
     else if (hs.themeRound >= QUESTIONS_PER_THEME) startVote();
-    else startQuestion();
+    else startCountdown();
   });
 }
 
@@ -209,96 +241,183 @@ function requestRematch(role) {
 }
 
 // ---------- connection ----------
-function cleanup() {
+function stopAll() {
+  session++;
   clearTimeout(timer);
-  clearTimeout(joinTimer);
-  try { conn?.close(); } catch {}
-  try { peer?.destroy(); } catch {}
-  peer = conn = hs = null;
+  clearInterval(beat);
+  clearInterval(helloTimer);
+  try { ch?.close(); } catch {}
+  ch = hs = guest = null;
+}
+
+function reset() {
+  stopAll();
   Object.assign(game, {
-    role: null, status: 'idle', error: '', roomId: '', view: null,
-    myChoice: null, myVote: null, myRound: -1, myVoteKey: -1,
+    role: null, status: 'idle', error: '', roomId: '', broker: 0, view: null,
+    myChoice: null, myVote: null, myRound: -1, myVoteKey: -1, rtt: null, link: 'online',
   });
 }
 
-function fail(err) {
+function fail(type, detail = '') {
   const msgs = {
-    'peer-unavailable': 'That arena does not exist (any more). Ask your rival for a fresh link.',
-    'unavailable-id': 'Arena name collision — please try again.',
-    network: 'Could not reach the signalling server. Check your connection.',
-    'browser-incompatible': 'This browser does not support WebRTC.',
+    network: 'Could not reach any relay server. Check your internet connection (or try without VPN / ad-blocker).',
+    'not-found': 'No one is hosting this arena. Make sure your rival still has the arena tab open, or ask for a fresh link.',
     full: 'This arena already has two gladiators.',
-    timeout: 'Could not reach your rival. Ask them to keep their arena tab open and try again.',
   };
-  clearTimeout(timer);
-  clearTimeout(joinTimer);
+  log(`error: ${type} ${detail}`);
+  stopAll();
   game.status = 'error';
-  game.error = msgs[err?.type] || `Something went wrong (${err?.type || err?.message || 'unknown'}).`;
+  game.error = msgs[type] || `Something went wrong (${type}).`;
 }
 
 const cleanName = (n, fallback) => String(n || '').trim().slice(0, 18) || fallback;
 
-export function createRoom(name) {
-  cleanup();
-  game.role = 'host';
-  game.status = 'creating';
-  const id = Math.random().toString(36).slice(2, 8);
-  const myName = cleanName(name, 'Maximus');
-  peer = new Peer(PREFIX + id);
-  peer.on('open', () => {
-    game.roomId = id;
-    game.status = 'waiting';
-    freshMatch({ host: myName, guest: '' });
-    sync();
-  });
-  peer.on('connection', (c) => {
-    if (conn?.open) {
-      c.on('open', () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 500); });
-      return;
-    }
-    conn = c;
-    c.on('data', (d) => {
-      if (c !== conn || !d || typeof d !== 'object') return;
-      if (d.t === 'hello') {
-        freshMatch({ host: myName, guest: cleanName(d.name, 'Rival') });
-        game.status = 'connected';
-        startVote();
-      } else if (d.t === 'answer') submit('guest', d.round, d.choice, d.ms);
-      else if (d.t === 'vote') castVote('guest', d.key, d.theme);
-      else if (d.t === 'rematch') requestRematch('guest');
-    });
-    c.on('close', () => {
-      if (c !== conn) return;
-      conn = null;
-      game.status = 'waiting';
-      freshMatch({ host: myName, guest: '' });
-      sync();
-    });
-  });
-  peer.on('disconnected', () => { try { peer?.reconnect(); } catch {} });
-  peer.on('error', (e) => { if (e.type !== 'peer-unavailable') fail(e); });
+function onPong(m) {
+  if (Number.isFinite(m.ts)) game.rtt = Math.round(performance.now() - m.ts);
 }
 
-export function joinRoom(id, name) {
-  cleanup();
+export async function createRoom(name) {
+  reset();
+  const my = session;
+  const myName = cleanName(name, 'Maximus');
+  game.role = 'host';
+  game.status = 'creating';
+  const room = rid(8);
+  log(`creating arena ${room} as host "${myName}"`);
+  try {
+    ch = await openChannel({
+      room, role: 'host', clientId: 'h-' + myId,
+      onMessage: (m) => my === session && onHostMessage(m, myName),
+      onStatus: (s) => (game.link = s),
+    });
+  } catch (e) {
+    if (my === session) fail('network', e.message);
+    return;
+  }
+  if (my !== session) { ch?.close(); return; }
+  game.roomId = room;
+  game.broker = ch.broker;
+  game.status = 'waiting';
+  freshMatch({ host: myName, guest: '' });
+  sync();
+  log('arena ready — waiting for rival');
+  beat = setInterval(() => {
+    if (!guest) return;
+    ch.send({ t: 'ping', to: guest.id, ts: performance.now() });
+    if (Date.now() - guest.lastSeen > PEER_TIMEOUT_MS) {
+      log(`rival silent for ${PEER_TIMEOUT_MS / 1000}s — treating as left`);
+      guestLeft(myName);
+    }
+  }, HEARTBEAT_MS);
+}
+
+function guestLeft(myName) {
+  guest = null;
+  game.rtt = null;
+  game.status = 'waiting';
+  freshMatch({ host: myName, guest: '' });
+  sync();
+}
+
+function onHostMessage(m, myName) {
+  if (!m || typeof m !== 'object' || !m.from) return;
+  if (guest && m.from !== guest.id) {
+    if (m.t === 'hello') { log(`third player ${m.from} tried to join — refused`); ch.send({ t: 'full', to: m.from }); }
+    return;
+  }
+  if (!guest && m.t !== 'hello') return;
+  if (guest) guest.lastSeen = Date.now();
+
+  switch (m.t) {
+    case 'hello':
+      if (guest) { log('rival re-sent hello — resyncing'); sync(); return; }
+      guest = { id: m.from, name: cleanName(m.name, 'Rival'), lastSeen: Date.now() };
+      log(`rival "${guest.name}" joined (${m.from})`);
+      game.status = 'connected';
+      freshMatch({ host: myName, guest: guest.name });
+      startVote();
+      break;
+    case 'answer': submit('guest', m.round, m.choice, m.ms); break;
+    case 'vote': castVote('guest', m.key, m.theme); break;
+    case 'rematch': requestRematch('guest'); break;
+    case 'ping': ch.send({ t: 'pong', to: m.from, ts: m.ts }); break;
+    case 'pong': onPong(m); break;
+    case 'bye': log('rival left the arena'); guestLeft(myName); break;
+  }
+}
+
+export async function joinRoom(room, broker, name) {
+  reset();
+  const my = session;
+  const myName = cleanName(name, 'Rival');
   game.role = 'guest';
   game.status = 'connecting';
-  game.roomId = id;
-  peer = new Peer();
-  joinTimer = setTimeout(() => game.status === 'connecting' && fail({ type: 'timeout' }), 20_000);
-  peer.on('open', () => {
-    conn = peer.connect(PREFIX + id, { reliable: true, serialization: 'json' });
-    conn.on('open', () => conn.send({ t: 'hello', name: cleanName(name, 'Rival') }));
-    conn.on('data', (d) => {
-      if (d?.t === 'state') {
-        clearTimeout(joinTimer);
-        game.status = 'connected';
-        applyView(d.s);
-      } else if (d?.t === 'full') fail({ type: 'full' });
+  game.roomId = room;
+  game.broker = broker;
+  const clientId = 'g-' + myId;
+  log(`joining arena ${room} on relay #${broker} as "${myName}"`);
+  try {
+    ch = await openChannel({
+      room, role: 'guest', broker, clientId,
+      onMessage: (m) => my === session && onGuestMessage(m, clientId),
+      onStatus: (s) => (game.link = s),
     });
-    conn.on('close', () => { if (game.status !== 'error') game.status = 'disconnected'; });
-  });
-  peer.on('error', fail);
+  } catch (e) {
+    if (my === session) fail('network', e.message);
+    return;
+  }
+  if (my !== session) { ch?.close(); return; }
+
+  const started = Date.now();
+  const hello = () => {
+    if (game.status !== 'connecting') return clearInterval(helloTimer);
+    if (Date.now() - started > JOIN_TIMEOUT_MS) return fail('not-found', `no answer from host in ${JOIN_TIMEOUT_MS / 1000}s`);
+    log('sending hello to host…');
+    ch.send({ t: 'hello', name: myName });
+  };
+  hello();
+  helloTimer = setInterval(hello, 1_500);
+
+  lastHostSeen = Date.now();
+  beat = setInterval(() => {
+    if (game.status !== 'connected') return;
+    ch.send({ t: 'ping', ts: performance.now() });
+    if (Date.now() - lastHostSeen > PEER_TIMEOUT_MS) {
+      log(`host silent for ${PEER_TIMEOUT_MS / 1000}s — connection lost`);
+      stopAll();
+      game.status = 'disconnected';
+    }
+  }, HEARTBEAT_MS);
+}
+
+function onGuestMessage(m, clientId) {
+  if (!m || typeof m !== 'object') return;
+  if (m.to && m.to !== clientId) {
+    if (m.t === 'state' && game.status === 'connecting') {
+      // The host is already playing with someone else.
+      log('host is busy with another player');
+    }
+    return;
+  }
+  lastHostSeen = Date.now();
+  switch (m.t) {
+    case 'state':
+      if (game.status !== 'connected') {
+        log('connected to host — match on!');
+        clearInterval(helloTimer);
+        game.status = 'connected';
+      }
+      applyView(m.s);
+      break;
+    case 'full': fail('full'); break;
+    case 'ping': ch.send({ t: 'pong', ts: m.ts }); break;
+    case 'pong': onPong(m); break;
+    case 'bye':
+      log('host closed the arena');
+      stopAll();
+      game.status = 'disconnected';
+      break;
+  }
 }
 
 // ---------- player actions ----------
@@ -307,7 +426,7 @@ export function answer(choice) {
   if (!v || v.phase !== 'question' || game.myChoice !== null) return;
   game.myChoice = choice;
   if (game.role === 'host') submit('host', v.round, choice);
-  else conn?.send({ t: 'answer', round: v.round, choice, ms: QUESTION_MS - Math.max(0, game.deadline - performance.now()) });
+  else ch?.send({ t: 'answer', round: v.round, choice, ms: QUESTION_MS - Math.max(0, game.deadline - performance.now()) });
 }
 
 export function vote(themeId) {
@@ -315,15 +434,16 @@ export function vote(themeId) {
   if (!v || v.phase !== 'vote' || game.myVote) return;
   game.myVote = themeId;
   if (game.role === 'host') castVote('host', v.voteKey, themeId);
-  else conn?.send({ t: 'vote', key: v.voteKey, theme: themeId });
+  else ch?.send({ t: 'vote', key: v.voteKey, theme: themeId });
 }
 
 export function rematch() {
   if (game.role === 'host') requestRematch('host');
-  else conn?.send({ t: 'rematch' });
+  else ch?.send({ t: 'rematch' });
 }
 
 export function leave() {
-  cleanup();
+  log('left the arena');
+  reset();
   history.replaceState(null, '', location.pathname + location.search);
 }
