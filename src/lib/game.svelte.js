@@ -22,7 +22,6 @@ export const game = $state({
   status: 'idle', // idle | creating | waiting | connecting | connected | error | disconnected
   error: '',
   roomId: '',
-  broker: 0,
   view: null, // latest snapshot from the host
   deadline: 0, // performance.now() timestamp when current phase ends
   myChoice: null,
@@ -253,7 +252,7 @@ function stopAll() {
 function reset() {
   stopAll();
   Object.assign(game, {
-    role: null, status: 'idle', error: '', roomId: '', broker: 0, view: null,
+    role: null, status: 'idle', error: '', roomId: '', view: null,
     myChoice: null, myVote: null, myRound: -1, myVoteKey: -1, rtt: null, link: 'online',
   });
 }
@@ -296,7 +295,6 @@ export async function createRoom(name) {
   }
   if (my !== session) { ch?.close(); return; }
   game.roomId = room;
-  game.broker = ch.broker;
   game.status = 'waiting';
   freshMatch({ host: myName, guest: '' });
   sync();
@@ -346,19 +344,18 @@ function onHostMessage(m, myName) {
   }
 }
 
-export async function joinRoom(room, broker, name) {
+export async function joinRoom(room, name) {
   reset();
   const my = session;
   const myName = cleanName(name, 'Rival');
   game.role = 'guest';
   game.status = 'connecting';
   game.roomId = room;
-  game.broker = broker;
   const clientId = 'g-' + myId;
-  log(`joining arena ${room} on relay #${broker} as "${myName}"`);
+  log(`joining arena ${room} as "${myName}"`);
   try {
     ch = await openChannel({
-      room, role: 'guest', broker, clientId,
+      room, role: 'guest', clientId,
       onMessage: (m) => my === session && onGuestMessage(m, clientId),
       onStatus: (s) => (game.link = s),
     });

@@ -13,7 +13,7 @@
   function readHash() {
     const p = new URLSearchParams(location.hash.slice(1));
     const room = p.get('arena') || '';
-    return room ? { room, broker: Number(p.get('b')) || 0 } : null;
+    return room ? { room } : null;
   }
 
   $effect(() => {
@@ -24,12 +24,12 @@
 
   const link = $derived(
     game.roomId && game.role === 'host'
-      ? `${location.origin}${location.pathname}#arena=${game.roomId}&b=${game.broker}`
+      ? `${location.origin}${location.pathname}#arena=${game.roomId}`
       : '',
   );
 
   function found() { unlock(); saveName(); createRoom(name); }
-  function enter() { unlock(); saveName(); joinRoom(invite.room, invite.broker, name); }
+  function enter() { unlock(); saveName(); joinRoom(invite.room, name); }
   function home() { leave(); invite = null; }
 
   async function copy() {
