@@ -1,0 +1,114 @@
+:root {
+  --night: #140e0a;
+  --night-2: #241810;
+  --marble: #f4eee2;
+  --marble-2: #e3d8c3;
+  --parchment: #efe1bd;
+  --ink: #2b1d12;
+  --ink-soft: #5c4631;
+  --gold: #d4af37;
+  --gold-hi: #f6dc84;
+  --gold-lo: #8a6a12;
+  --crimson: #9b1c1c;
+  --crimson-hi: #d13a2f;
+  --azure: #1d4f8c;
+  --azure-hi: #3f7fd0;
+  --laurel: #3f7d3a;
+  --laurel-hi: #6fbf5f;
+  --wrong: #b3261e;
+
+  --f-display: 'Cinzel Decorative', 'Cinzel', serif;
+  --f-caps: 'Cinzel', 'Trajan Pro', serif;
+  --f-body: 'EB Garamond', Georgia, serif;
+
+  --radius: 6px;
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; min-height: 100%; }
+
+body {
+  font-family: var(--f-body);
+  color: var(--marble);
+  background-color: var(--night);
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgb(212 175 55 / 0.20), transparent 55%),
+    radial-gradient(ellipse at 50% 120%, rgb(155 28 28 / 0.25), transparent 60%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .9 0 0 0 0 .7 0 0 0 .06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, var(--night-2), var(--night));
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+
+/* Greek-key band used as a frieze divider */
+.meander {
+  height: 14px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='14' viewBox='0 0 28 14'%3E%3Cpath d='M0 13h12V3H4v6h4V7' fill='none' stroke='%23d4af37' stroke-width='1.6'/%3E%3Cpath d='M14 13h12V3h-8v6h4V7' fill='none' stroke='%23d4af37' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x center / auto 100%;
+  opacity: 0.75;
+}
+
+/* Gilded button */
+.btn {
+  font-family: var(--f-caps);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.85em 1.6em;
+  border-radius: var(--radius);
+  border: 1px solid var(--gold-hi);
+  color: #2a1a06;
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold) 45%, var(--gold-lo));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 4px 0 #5a430b, 0 8px 18px rgb(0 0 0 / 0.4);
+  transition: transform 0.08s, box-shadow 0.08s, filter 0.15s;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 1px 0 #5a430b, 0 4px 10px rgb(0 0 0 / 0.4); }
+.btn:disabled { filter: grayscale(0.6) brightness(0.7); }
+.btn.ghost {
+  background: transparent;
+  color: var(--gold-hi);
+  border-color: rgb(212 175 55 / 0.55);
+  box-shadow: none;
+}
+
+/* Marble tablet */
+.tablet {
+  position: relative;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse at 20% 0%, rgb(255 255 255 / 0.7), transparent 50%),
+    linear-gradient(115deg, transparent 40%, rgb(150 130 110 / 0.10) 42%, transparent 46%),
+    linear-gradient(160deg, var(--marble), var(--marble-2));
+  border: 2px solid var(--gold);
+  outline: 1px solid rgb(212 175 55 / 0.45);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.caps { font-family: var(--f-caps); letter-spacing: 0.14em; text-transform: uppercase; }
+
+input.field {
+  font: inherit;
+  font-size: 1.15rem;
+  width: 100%;
+  padding: 0.7em 0.9em;
+  border-radius: var(--radius);
+  border: 1px solid var(--gold-lo);
+  background: rgb(255 255 255 / 0.65);
+  color: var(--ink);
+  outline: none;
+}
+input.field:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb(212 175 55 / 0.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
