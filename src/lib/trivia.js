@@ -69,13 +69,18 @@ export async function fetchBatch(category) {
   return [];
 }
 
-/** Difficulty 4..10 on a normal curve centred on 7 (nothing is rated 1-3). */
+/**
+ * Difficulty 4..10 (nothing is rated 1-3): a bell shape peaking at 6-7, with a
+ * thin top tail so 9s and 10s are rare treats. Weights are percentages.
+ */
+const DIFFICULTY_WEIGHTS = { 4: 10, 5: 17, 6: 25, 7: 25, 8: 16, 9: 5, 10: 2 };
+
 export function rollDifficulty() {
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-  return Math.min(10, Math.max(4, Math.round(7 + z * 1.6)));
+  let r = Math.random() * 100;
+  for (const [d, w] of Object.entries(DIFFICULTY_WEIGHTS)) {
+    if ((r -= w) < 0) return Number(d);
+  }
+  return 7;
 }
 
 const levelOf = (d) => (d <= 5 ? 'easy' : d <= 8 ? 'medium' : 'hard');
