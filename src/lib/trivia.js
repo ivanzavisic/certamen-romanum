@@ -70,10 +70,11 @@ export async function fetchBatch(category) {
 }
 
 /**
- * Difficulty 4..10 (nothing is rated 1-3): a bell shape peaking at 6-7, with a
+ * Difficulty 4..10 (nothing is rated 1-3), weighted towards the easy end with a
  * thin top tail so 9s and 10s are rare treats. Weights are percentages.
+ * Average rating is about 5.5 (was 6.4 — lowered by ~15% on request).
  */
-const DIFFICULTY_WEIGHTS = { 4: 10, 5: 17, 6: 25, 7: 25, 8: 16, 9: 5, 10: 2 };
+const DIFFICULTY_WEIGHTS = { 4: 30, 5: 27, 6: 21, 7: 12, 8: 7, 9: 2, 10: 1 };
 
 export function rollDifficulty() {
   let r = Math.random() * 100;
