@@ -2,7 +2,7 @@
 
 A 1v1 Roman-arena trivia duel built with Svelte 5.
 
-- 10 seconds per question, 4 answers.
+- 10 seconds per question, 3 answers (the correct one plus 2 random wrong ones).
 - First to 10 points wins. At 10–10 it's sudden death (*mors subita*): the first player to answer right while the other misses wins.
 - Every 3 questions both players vote for the next theme out of 6. If the votes differ, Fortuna (a coin flip) decides.
 - Difficulty is rolled on a 4–10 scale (weighted towards easy, average about 5.5; 9 is 2% and 10 is 1% of questions) and mapped to Open Trivia DB's easy/medium/hard.

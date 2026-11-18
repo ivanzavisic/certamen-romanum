@@ -99,7 +99,7 @@
   <section class="rules">
     <h3 class="caps">Leges Certaminis</h3>
     <ul>
-      <li><b>10</b> seconds per question, four answers, one truth.</li>
+      <li><b>10</b> seconds per question, three answers, one truth.</li>
       <li>First to <b>{TARGET}</b> points is crowned victor.</li>
       <li>At <b>10 – 10</b> it's <i>mors subita</i>: the first to answer right while the other misses wins.</li>
       <li>Every <b>3</b> questions you both vote for the next theme. Split vote? Fortuna decides.</li>

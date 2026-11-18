@@ -12,6 +12,7 @@ export const COUNTDOWN_MS = 3_000;
 export const VOTE_MS = 12_000;
 export const VOTE_RESULT_MS = 3_200;
 export const QUESTIONS_PER_THEME = 3;
+export const ANSWER_COUNT = 3; // correct answer + 2 random wrong ones
 const GRACE_MS = 700; // network grace for the guest on deadlines
 const HEARTBEAT_MS = 2_000;
 const PEER_TIMEOUT_MS = 12_000;
@@ -190,7 +191,7 @@ function startCountdown() {
 
 function startQuestion() {
   const q = takeQuestion(hs.batch, hs.usedLocal);
-  const options = shuffle([q.a, ...q.w]);
+  const options = shuffle([q.a, ...shuffle(q.w).slice(0, ANSWER_COUNT - 1)]);
   hs.round++;
   hs.themeRound++;
   hs.q = { text: q.q, options, d: q.d };
@@ -202,7 +203,7 @@ function startQuestion() {
 
 function submit(role, round, choice, clientMs) {
   if (hs?.phase !== 'question' || round !== hs.round || hs.answers[role]) return;
-  if (!Number.isInteger(choice) || choice < 0 || choice > 3) return;
+  if (!Number.isInteger(choice) || choice < 0 || choice >= hs.q.options.length) return;
   let ms = Date.now() - hs.qStart;
   if (Number.isFinite(clientMs)) ms = Math.min(ms, Math.max(0, clientMs));
   hs.answers[role] = { choice, ms: Math.min(ms, QUESTION_MS) };

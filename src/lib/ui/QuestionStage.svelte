@@ -20,8 +20,11 @@
     return a.choice === v.correct ? { cls: 'right', word: 'Verum', sub } : { cls: 'wrong', word: 'Falsum', sub };
   }
 
+  const count = $derived(v.q.options.length);
+  const lastLetter = $derived(LETTERS[count - 1]);
+
   function choose(i) {
-    if (v.phase !== 'question' || game.myChoice !== null) return;
+    if (v.phase !== 'question' || game.myChoice !== null || i >= count) return;
     sfx.select();
     answer(i);
   }
@@ -29,7 +32,8 @@
 
 <svelte:window onkeydown={(e) => {
   if (e.target instanceof HTMLInputElement) return;
-  const i = ['1', '2', '3', '4'].indexOf(e.key) >= 0 ? ['1', '2', '3', '4'].indexOf(e.key) : ['a', 'b', 'c', 'd'].indexOf(e.key.toLowerCase());
+  const n = ['1', '2', '3', '4'].indexOf(e.key);
+  const i = n >= 0 ? n : ['a', 'b', 'c', 'd'].indexOf(e.key.toLowerCase());
   if (i >= 0) choose(i);
 }} />
 
@@ -82,7 +86,7 @@
     {/each}
   </div>
   {#if v.phase === 'question'}
-    <p class="keys">{game.myChoice === null ? 'Tip: keys A–D or 1–4 answer too.' : 'Answer locked. Waiting for your rival…'}</p>
+    <p class="keys">{game.myChoice === null ? `Tip: keys A–${lastLetter} or 1–${count} answer too.` : 'Answer locked. Waiting for your rival…'}</p>
   {/if}
 </section>
 
@@ -100,7 +104,7 @@
     text-wrap: balance;
   }
 
-  .options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin-top: 1.1rem; }
+  .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; margin-top: 1.1rem; }
   .opt {
     position: relative; display: flex; align-items: center; gap: 0.9rem; text-align: left;
     padding: 1rem 1.1rem; min-height: 76px; border-radius: var(--radius);
