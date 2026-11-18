@@ -17,7 +17,7 @@
   <Lobby />
 {/if}
 
-<footer>Quaestiones ex <a href="https://opentdb.com" target="_blank" rel="noreferrer">Open Trivia DB</a> · CC BY-SA 4.0</footer>
+<footer>Quaestiones ex <a href="https://the-trivia-api.com" target="_blank" rel="noreferrer">The Trivia API</a> &amp; <a href="https://opentdb.com" target="_blank" rel="noreferrer">Open Trivia DB</a> (CC BY-SA 4.0)</footer>
 
 <style>
   .columns span {

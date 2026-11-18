@@ -1,7 +1,8 @@
 // Host-authoritative 1v1 game. The player who creates the arena runs the game
 // loop; the guest only sends inputs and renders snapshots. Messages travel over
 // a public MQTT relay (see net.js).
-import { THEMES, fetchBatch, takeQuestion, warmUp } from './trivia.js';
+import { THEMES, fetchBatch, takeQuestion, warmUp, mergeInto } from './trivia.js';
+import { qKey, markSeen, seenList, isSeenHere } from './seen.js';
 import { openChannel } from './net.js';
 import { log } from './log.svelte.js';
 
@@ -66,8 +67,14 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const themeById = (id) => THEMES.find((t) => t.id === id);
 
 // ---------- snapshots ----------
+/** A question counts as seen if either player has had it before (any match). */
+function isSeenByEither(key) {
+  return isSeenHere(key) || !!guest?.seen?.has(key);
+}
+
 function applyView(s) {
   if (s.round !== game.myRound) { game.myRound = s.round; game.myChoice = null; }
+  if (s.phase === 'question' && s.q) markSeen(qKey(s.q.text));
   if (s.voteKey !== game.myVoteKey) { game.myVoteKey = s.voteKey; game.myVote = null; }
   game.view = s;
   game.deadline = performance.now() + (s.remaining ?? 0);
@@ -176,9 +183,13 @@ function resolveVote() {
   hs.batch = [];
   const match = hs.match;
   log(`theme chosen: ${themeById(hs.theme)?.name}${hs.voteCoin ? ' (coin flip)' : ''} — fetching questions`);
-  const ready = fetchBatch(hs.theme).then((b) => {
-    log(b.length ? `got ${b.length} questions from Open Trivia DB` : 'trivia API unavailable — using built-in questions');
-    if (hs?.match === match) hs.batch = b;
+  const theme = hs.theme;
+  const sameTheme = () => hs?.match === match && hs.theme === theme;
+  const ready = fetchBatch(theme, isSeenByEither, (more) => {
+    if (sameTheme()) { mergeInto(hs.batch, more); log(`+${more.length} more questions arrived`); }
+  }).then((b) => {
+    if (!b.length) log('trivia APIs unavailable — using built-in questions');
+    if (sameTheme()) mergeInto(hs.batch, b);
   });
   setPhase('voteResult', VOTE_RESULT_MS, () => ready.then(() => { if (hs?.match === match) startCountdown(); }));
 }
@@ -331,7 +342,11 @@ function onHostMessage(m, myName) {
   switch (m.t) {
     case 'hello':
       if (guest) { log('rival re-sent hello — resyncing'); sync(); return; }
-      guest = { id: m.from, name: cleanName(m.name, 'Rival'), lastSeen: Date.now() };
+      guest = {
+        id: m.from, name: cleanName(m.name, 'Rival'), lastSeen: Date.now(),
+        seen: new Set(Array.isArray(m.seen) ? m.seen.filter((k) => typeof k === 'string').slice(-3000) : []),
+      };
+      log(`rival has seen ${guest.seen.size} questions before — those will be skipped`);
       log(`rival "${guest.name}" joined (${m.from})`);
       game.status = 'connected';
       freshMatch({ host: myName, guest: guest.name });
@@ -372,7 +387,7 @@ export async function joinRoom(room, name) {
     if (game.status !== 'connecting') return clearInterval(helloTimer);
     if (Date.now() - started > JOIN_TIMEOUT_MS) return fail('not-found', `no answer from host in ${JOIN_TIMEOUT_MS / 1000}s`);
     log('sending hello to host…');
-    ch.send({ t: 'hello', name: myName });
+    ch.send({ t: 'hello', name: myName, seen: seenList(2000) });
   };
   hello();
   helloTimer = setInterval(hello, 1_500);
