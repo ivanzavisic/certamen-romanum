@@ -1,7 +1,7 @@
 // Host-authoritative 1v1 game. The player who creates the arena runs the game
 // loop; the guest only sends inputs and renders snapshots. Messages travel over
 // a public MQTT relay (see net.js).
-import { THEMES, fetchBatch, takeQuestion } from './trivia.js';
+import { THEMES, fetchBatch, takeQuestion, warmUp } from './trivia.js';
 import { openChannel } from './net.js';
 import { log } from './log.svelte.js';
 
@@ -190,11 +190,11 @@ function startCountdown() {
 }
 
 function startQuestion() {
-  const q = takeQuestion(hs.batch, hs.usedLocal);
+  const q = takeQuestion(hs.batch, hs.usedLocal, hs.theme);
   const options = shuffle([q.a, ...shuffle(q.w).slice(0, ANSWER_COUNT - 1)]);
   hs.round++;
   hs.themeRound++;
-  hs.q = { text: q.q, options, d: q.d };
+  hs.q = { text: q.q, options, d: q.d, label: q.label };
   hs.correct = options.indexOf(q.a);
   hs.answers = { host: null, guest: null };
   hs.qStart = Date.now();
@@ -300,6 +300,7 @@ export async function createRoom(name) {
   freshMatch({ host: myName, guest: '' });
   sync();
   log('arena ready — waiting for rival');
+  warmUp(); // get the trivia API session while the rival is on the way
   beat = setInterval(() => {
     if (!guest) return;
     ch.send({ t: 'ping', to: guest.id, ts: performance.now() });

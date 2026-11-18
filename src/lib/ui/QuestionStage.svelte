@@ -40,7 +40,7 @@
 <section>
   <article class="question tablet">
     <div class="qhead">
-      <span class="chip">{v.theme?.icon} {v.theme?.name}</span>
+      <span class="chip">{(v.q.label ?? v.theme)?.icon} {(v.q.label ?? v.theme)?.name}</span>
       <span class="grade" title="Difficulty {v.q.d} of 10">
         Difficulty {v.q.d}/10
         <span class="gpips" aria-hidden="true">{#each Array(10) as _, k}<i class:on={k < v.q.d}></i>{/each}</span>

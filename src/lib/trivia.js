@@ -1,6 +1,7 @@
 // Questions come from Open Trivia DB (https://opentdb.com, CC BY-SA 4.0).
 // The local bank in questions.js is only used as a fallback if the API fails.
-import { QUESTIONS as LOCAL } from './questions.js';
+import { QUESTIONS as LOCAL, THEMES as LOCAL_THEMES } from './questions.js';
+import { log } from './log.svelte.js';
 
 // Open Trivia DB categories offered in theme votes (tiny categories left out).
 export const THEMES = [
@@ -26,8 +27,19 @@ export const THEMES = [
   { id: 32, name: 'Cartoons', latin: 'Imagines Motae', icon: '🐭' },
 ];
 
+// Which backup-bank themes fit each API category. Categories with no good match
+// map to [] — a backup question there is shown under its own theme's label, so
+// the screen never claims e.g. "Geography" for a biology question.
+const BACKUP_THEMES = {
+  9: null, // General Knowledge: anything fits
+  10: ['arts'], 11: ['screen'], 12: ['music'], 13: ['music', 'arts'], 14: ['screen'],
+  15: [], 16: [], 17: ['science', 'space'], 18: [], 19: [], 20: ['myth'],
+  21: ['sport'], 22: ['geo'], 23: ['history', 'rome'], 27: [], 28: [], 29: [], 31: [], 32: [],
+};
+
 const API = 'https://opentdb.com';
 const GAP_MS = 5_200; // API allows one request per 5 s per IP
+const MAX_ATTEMPTS = 5;
 let token = null;
 let last = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -37,33 +49,64 @@ async function call(path) {
   if (wait > 0) await sleep(wait);
   last = Date.now();
   const res = await fetch(API + path, { signal: AbortSignal.timeout(8_000) });
+  if (res.status === 429) return { response_code: 5 }; // rate limited
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
 
 const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 
-/** Fetch a batch of multiple-choice questions for one category. Never throws. */
-export async function fetchBatch(category) {
+/** Get a session token early (e.g. while waiting for the rival) so it doesn't delay the first theme. */
+export async function warmUp() {
+  if (token) return;
   try {
-    if (!token) token = (await call('/api_token.php?command=request')).token || null;
-  } catch { /* play without token */ }
-  for (const amount of [12, 6]) {
+    token = (await call('/api_token.php?command=request')).token || null;
+    if (token) log('trivia API session ready');
+  } catch (e) {
+    log(`trivia API token failed (${e.message}) — will play without it`);
+  }
+}
+
+/**
+ * Fetch a batch of multiple-choice questions for one category. Never throws.
+ * Retries on rate limits and token problems, and asks for fewer questions if
+ * the category is running out.
+ */
+export async function fetchBatch(category) {
+  if (!token) await warmUp();
+  let amount = 12;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const tk = token ? `&token=${token}` : '';
       const j = await call(`/api.php?amount=${amount}&category=${category}&type=multiple&encode=url3986${tk}`);
-      if (j.response_code === 0) {
-        return j.results.map((r) => ({
-          q: dec(r.question),
-          a: dec(r.correct_answer),
-          w: r.incorrect_answers.map(dec),
-          level: r.difficulty,
-        }));
+      switch (j.response_code) {
+        case 0:
+          return j.results.map((r) => ({
+            q: dec(r.question),
+            a: dec(r.correct_answer),
+            w: r.incorrect_answers.map(dec),
+            level: r.difficulty,
+          }));
+        case 1: // not enough questions left in this category
+          if (amount > 3) { amount = amount === 12 ? 6 : 3; break; }
+          if (token) { log('category used up — resetting question history'); await call(`/api_token.php?command=reset&token=${token}`); amount = 12; }
+          break;
+        case 3: // token unknown/expired
+          token = null;
+          break;
+        case 4: // token has seen every question here
+          log('category used up — resetting question history');
+          await call(`/api_token.php?command=reset&token=${token}`);
+          break;
+        case 5:
+          log(`trivia API busy (attempt ${attempt}) — retrying`);
+          break;
+        default:
+          log(`trivia API answered code ${j.response_code}`);
+          return [];
       }
-      if (j.response_code === 4 && token) await call(`/api_token.php?command=reset&token=${token}`);
-      else if (j.response_code === 3) token = null;
-    } catch {
-      break;
+    } catch (e) {
+      log(`trivia API error (attempt ${attempt}): ${e.message}`);
     }
   }
   return [];
@@ -87,22 +130,45 @@ export function rollDifficulty() {
 const levelOf = (d) => (d <= 5 ? 'easy' : d <= 8 ? 'medium' : 'hard');
 const NEAREST = { easy: ['easy', 'medium', 'hard'], medium: ['medium', 'easy', 'hard'], hard: ['hard', 'medium', 'easy'] };
 
-/** Take one question out of the batch matching a rolled difficulty; falls back to the local bank. */
-export function takeQuestion(batch, usedLocal) {
+function pickNear(pool, d) {
+  const best = Math.min(...pool.map((q) => Math.abs(q.d - d)));
+  const near = pool.filter((q) => Math.abs(q.d - d) === best);
+  return near[Math.floor(Math.random() * near.length)];
+}
+
+/**
+ * Take one question out of the batch matching a rolled difficulty; falls back to
+ * the local bank, staying inside the chosen theme whenever the bank covers it.
+ * Returns `label` (a theme to display) only when the question is off-theme.
+ */
+export function takeQuestion(batch, usedLocal, category) {
   const d = rollDifficulty();
   for (const level of NEAREST[levelOf(d)]) {
     const i = batch.findIndex((q) => q.level === level);
     if (i >= 0) {
       const [q] = batch.splice(i, 1);
       // Keep the shown rating consistent with the API's own level.
-      return { ...q, d: levelOf(d) === level ? d : { easy: 5, medium: 7, hard: 9 }[level] };
+      return { ...q, d: levelOf(d) === level ? d : { easy: 5, medium: 7, hard: 9 }[level], label: null };
     }
   }
-  let pool = LOCAL.filter((q) => !usedLocal.has(q));
-  if (!pool.length) { usedLocal.clear(); pool = LOCAL; }
-  const best = Math.min(...pool.map((q) => Math.abs(q.d - d)));
-  const near = pool.filter((q) => Math.abs(q.d - d) === best);
-  const q = near[Math.floor(Math.random() * near.length)];
+
+  const fits = BACKUP_THEMES[category];
+  const onTheme = (q) => fits === null || fits === undefined || fits.includes(q.t);
+  let pool = LOCAL.filter((q) => onTheme(q) && !usedLocal.has(q));
+  if (!pool.length) {
+    // Recycle this theme's backup questions before going off-theme.
+    LOCAL.filter(onTheme).forEach((q) => usedLocal.delete(q));
+    pool = LOCAL.filter(onTheme);
+  }
+  let offTheme = false;
+  if (!pool.length) {
+    offTheme = true;
+    pool = LOCAL.filter((q) => !usedLocal.has(q));
+    if (!pool.length) { usedLocal.clear(); pool = LOCAL; }
+  }
+  const q = pickNear(pool, d);
   usedLocal.add(q);
-  return { q: q.q, a: q.a, w: q.w, d: q.d };
+  const own = LOCAL_THEMES.find((t) => t.id === q.t);
+  log(`backup question used${offTheme ? ` (no backup for this theme — showing a ${own?.name} question)` : ''}`);
+  return { q: q.q, a: q.a, w: q.w, d: q.d, label: offTheme && own ? { icon: own.icon, name: own.name } : null };
 }
